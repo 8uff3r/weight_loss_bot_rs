@@ -85,6 +85,7 @@ Works with any OpenAI-compatible provider, e.g.:
 - OpenRouter: `AI_BASE_URL=https://openrouter.ai/api/v1`
 - Gemini: `AI_BASE_URL=https://generativelanguage.googleapis.com/v1beta/openai`
 - Ollama (local): `AI_BASE_URL=http://localhost:11434/v1`, `AI_MODEL=llava` (needs a vision model), no API key
+- Opencode: if `AI_BASE_URL` contains `opencode.ai`, the bot automatically sends a stable `x-opencode-session` id (generated once and persisted in `data/log.json`) and a self-identifying `User-Agent` (`tg_wl_bot/<version>`), as required by their API. It also always sends that User-Agent to every provider.
 
 ## Storage
 

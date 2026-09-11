@@ -118,6 +118,9 @@ struct Persisted {
     /// Local date (a 1st of month) for which the last monthly report was sent.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     last_monthly_covered: Option<String>,
+    /// Stable session id for AI providers that want one (e.g. opencode).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    ai_session_id: Option<String>,
 }
 
 /// JSON-file backed store: `data/log.json`, atomically rewritten on change.
@@ -208,5 +211,13 @@ impl Store {
 
     pub fn set_last_monthly_covered(&mut self, d: NaiveDate) {
         self.data.last_monthly_covered = Some(d.format("%Y-%m-%d").to_string());
+    }
+
+    pub fn ai_session_id(&self) -> Option<&str> {
+        self.data.ai_session_id.as_deref()
+    }
+
+    pub fn set_ai_session_id(&mut self, id: &str) {
+        self.data.ai_session_id = Some(id.to_string());
     }
 }

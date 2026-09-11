@@ -10,6 +10,10 @@ pub struct Ai {
     base_url: String,
     api_key: String,
     model: String,
+    user_agent: String,
+    /// opencode (opencode.ai) requires a stable session id per conversation.
+    is_opencode: bool,
+    session_id: String,
 }
 
 const MEAL_SYSTEM_PROMPT: &str = r#"You analyze posts from a personal food-diary channel. Each post contains a short text description and/or a photo of food. Identify every distinct food or drink, estimate its portion using common household or gram measures, and estimate calories. Combine information from the text and the image; if they conflict, mention it in caveats. Estimate what is actually visible or described — do not invent hidden side dishes, but note likely hidden calorie sources (oil, butter, sauce, dressing) in caveats when relevant.
@@ -27,16 +31,20 @@ Rules:
 const NARRATOR_SYSTEM_PROMPT: &str = "You are a concise nutrition coach reviewing a personal food diary. Write 2-4 short sentences of practical observations and, if useful, one concrete suggestion. No headings, no bullet points, no markdown, no emojis. Be honest, specific and encouraging.";
 
 impl Ai {
-    pub fn new(api_key: String, base_url: String, model: String) -> Ai {
+    pub fn new(api_key: String, base_url: String, model: String, session_id: String) -> Ai {
         let http = reqwest::Client::builder()
             .timeout(std::time::Duration::from_secs(120))
             .build()
             .unwrap_or_default();
+        let is_opencode = base_url.contains("opencode.ai");
         Ai {
             http,
             base_url,
             api_key,
             model,
+            user_agent: user_agent(),
+            is_opencode,
+            session_id,
         }
     }
 
@@ -90,9 +98,16 @@ impl Ai {
 
     async fn chat(&self, body: Value) -> Result<String, String> {
         let url = format!("{}/chat/completions", self.base_url.trim_end_matches('/'));
-        let mut req = self.http.post(&url).json(&body);
+        let mut req = self
+            .http
+            .post(&url)
+            .header(reqwest::header::USER_AGENT, &self.user_agent)
+            .json(&body);
         if !self.api_key.is_empty() {
             req = req.bearer_auth(&self.api_key);
+        }
+        if self.is_opencode {
+            req = req.header("x-opencode-session", &self.session_id);
         }
         let resp = req
             .send()
@@ -130,6 +145,22 @@ fn num(v: Option<&Value>) -> Option<f64> {
         Value::String(s) => s.trim().trim_end_matches("kcal").trim().parse().ok(),
         _ => None,
     }
+}
+
+/// A self-identifying User-Agent (some providers, like opencode, reject
+/// generic SDK/HTTP-library default agents).
+fn user_agent() -> String {
+    format!("tg_wl_bot/{}", env!("CARGO_PKG_VERSION"))
+}
+
+/// Generate a stable-per-installation session id for providers that want one.
+pub fn generate_session_id() -> String {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    format!("tg-wl-bot-{nanos:x}")
 }
 
 /// Parse the AI's reply into a MealAnalysis, tolerating markdown fences and
