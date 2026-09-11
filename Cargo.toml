@@ -1,0 +1,20 @@
+[package]
+name = "tg_wl_bot"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+tokio = { version = "1.53.1", features = ["rt-multi-thread", "macros", "fs", "time", "sync"] }
+log = "0.4.33"
+reqwest = { version = "0.13.4", default-features = false, features = ["rustls", "json"] }
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.151"
+pretty_env_logger = "0.5.0"
+teloxide = { version = "0.17.0", default-features = false, features = [
+  "macros",
+  "rustls",
+  "ctrlc_handler",
+] }
+chrono = "0.4"
+dotenvy = "0.15"
+base64 = "0.22"
