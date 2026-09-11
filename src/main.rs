@@ -76,6 +76,7 @@ async fn main() {
             cfg.ai_base_url.clone(),
             cfg.ai_model.clone(),
             ai_session_id,
+            cfg.ai_language.clone(),
         )),
         store: Mutex::new(store),
         bot_user_id: me.user.id,

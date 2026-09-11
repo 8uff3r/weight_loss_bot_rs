@@ -10,7 +10,10 @@ pub enum Origin {
     /// A regular post in the tracked channel.
     #[default]
     Channel,
-    /// Something forwarded from elsewhere (original date is preserved).
+    /// Something forwarded from the user's own channel (backfill); the record's
+    /// chat_id/message_id point at the original channel post.
+    ForwardedChannel,
+    /// Something forwarded from a non-channel chat (original date preserved).
     Forwarded,
     /// Content sent directly to the bot in a private chat.
     Dm,
@@ -89,6 +92,10 @@ pub struct MealRecord {
     /// When the record was created (unix ts); used by the retry janitor.
     #[serde(default)]
     pub created_at: i64,
+    /// Chat where a fallback comment should be posted (the tracked channel for
+    /// forwarded posts). None for DM-origin records.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub comment_chat: Option<i64>,
     pub attempts: u32,
 }
 

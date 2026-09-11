@@ -40,8 +40,8 @@ flowchart LR
     F --> G[Daily / Weekly / Monthly<br/>reports + AI narrative]
 ```
 
-- **New posts** (channel): analyzed within seconds; the breakdown is posted into the channel (it is skipped from the log itself — the bot ignores its own posts).
-- **Edited posts**: re-analyzed and the previous breakdown comment is **edited in place**.
+- **New posts** (channel): analyzed within seconds; the breakdown is **appended to your post itself** — the bot edits the post and adds the analysis after a `----` seam (it keeps your original text intact in its log). If Telegram refuses the edit (bot lacks the _Edit messages_ right, the post is too old, or the caption would exceed 1024 chars), it falls back to posting a separate comment.
+- **Edited posts**: when you edit your post, the bot strips its previously appended section (detected via the `----` seam), re-analyzes the changed text and rewrites the appended breakdown. The seam also makes forwarded copies of analyzed posts safe: the bot strips its own section before logging.
 - **Albums**: a media group is buffered briefly and analyzed as **one meal** with a single AI call over all its photos.
 - **Quick logging**: send a photo/text directly to the bot in DM — analyzed and counted in reports.
 - **Backfilling history**: Telegram bots can't read chat history. Forward old posts to the bot in DM; it logs them under their **original date** and **skips duplicates** (identity = original channel + message id), so double-forwarding is safe. Editing an old post also (re)logs it.
@@ -61,23 +61,25 @@ Reports include: posts logged, analyzed/failed counts, total calories with estim
 
 ## Configuration
 
-| Variable                | Default                     | Meaning                                           |
-| ----------------------- | --------------------------- | ------------------------------------------------- |
-| `TELOXIDE_TOKEN`        | — (required)                | bot token from @BotFather                         |
-| `AI_API_KEY`            | —                           | key for the AI provider (empty for local servers) |
-| `AI_BASE_URL`           | `https://api.openai.com/v1` | any OpenAI-compatible endpoint                    |
-| `AI_MODEL`              | `gpt-4o-mini`               | vision-capable model                              |
-| `TRACKED_CHAT_ID`       | —                           | restrict tracking to this chat id                 |
-| `OWNER_ID`              | —                           | owner user id (else first `/start` wins)          |
-| `REPORT_CHAT_ID`        | —                           | target chat for scheduled reports                 |
-| `TZ_OFFSET_MINUTES`     | `0`                         | your UTC offset (e.g. `180` = UTC+3)              |
-| `DAILY_REPORT_TIME`     | `00:05`                     | daily report time (local, HH:MM)                  |
-| `WEEKLY_REPORT_TIME`    | `00:05`                     | weekly report time, sent Mondays                  |
-| `MONTHLY_REPORT_TIME`   | `00:10`                     | monthly report time, sent on the 1st              |
-| `CALORIE_TARGET`        | —                           | daily kcal target for reports                     |
-| `AI_COMMENT_IN_CHANNEL` | `true`                      | post breakdowns into the channel                  |
-| `AI_NARRATIVE`          | `true`                      | AI commentary in scheduled reports                |
-| `DATA_DIR`              | `data`                      | storage directory                                 |
+| Variable                | Default                     | Meaning                                                                                           |
+| ----------------------- | --------------------------- | ------------------------------------------------------------------------------------------------- |
+| `TELOXIDE_TOKEN`        | — (required)                | bot token from @BotFather                                                                         |
+| `AI_API_KEY`            | —                           | key for the AI provider (empty for local servers)                                                 |
+| `AI_BASE_URL`           | `https://api.openai.com/v1` | any OpenAI-compatible endpoint                                                                    |
+| `AI_MODEL`              | `gpt-4o-mini`               | vision-capable model                                                                              |
+| `TRACKED_CHAT_ID`       | —                           | restrict tracking to this chat id                                                                 |
+| `OWNER_ID`              | —                           | owner user id (else first `/start` wins)                                                          |
+| `REPORT_CHAT_ID`        | —                           | target chat for scheduled reports                                                                 |
+| `TZ_OFFSET_MINUTES`     | `0`                         | your UTC offset (e.g. `180` = UTC+3)                                                              |
+| `DAILY_REPORT_TIME`     | `00:05`                     | daily report time (local, HH:MM)                                                                  |
+| `WEEKLY_REPORT_TIME`    | `00:05`                     | weekly report time, sent Mondays                                                                  |
+| `MONTHLY_REPORT_TIME`   | `00:10`                     | monthly report time, sent on the 1st                                                              |
+| `CALORIE_TARGET`        | —                           | daily kcal target for reports                                                                     |
+| `AI_COMMENT_IN_CHANNEL` | `true`                      | touch the channel at all (breakdown as edit or comment)                                           |
+| `AI_EDIT_POSTS`         | `true`                      | append the breakdown to the post itself (edit-in-place); `false` = always post a separate comment |
+| `AI_LANGUAGE`           | —                           | force a language for AI output (e.g. `fa`); unset = follow each post's language, English fallback |
+| `AI_NARRATIVE`          | `true`                      | AI commentary in scheduled reports                                                                |
+| `DATA_DIR`              | `data`                      | storage directory                                                                                 |
 
 Works with any OpenAI-compatible provider, e.g.:
 

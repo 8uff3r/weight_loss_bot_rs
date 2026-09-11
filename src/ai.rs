@@ -14,6 +14,9 @@ pub struct Ai {
     /// opencode (opencode.ai) requires a stable session id per conversation.
     is_opencode: bool,
     session_id: String,
+    /// Optional forced output language (AI_LANGUAGE). When unset, breakdowns
+    /// follow the language of each post and narratives stay English.
+    language: Option<String>,
 }
 
 const MEAL_SYSTEM_PROMPT: &str = r#"You analyze posts from a personal food-diary channel. Each post contains a short text description and/or a photo of food. Identify every distinct food or drink, estimate its portion using common household or gram measures, and estimate calories. Combine information from the text and the image; if they conflict, mention it in caveats. Estimate what is actually visible or described — do not invent hidden side dishes, but note likely hidden calorie sources (oil, butter, sauce, dressing) in caveats when relevant.
@@ -26,12 +29,20 @@ Rules:
 - items must be non-empty when food is present;
 - use null for unknown macro fields;
 - totals must be realistic for the described/visible portions;
-- if nothing edible is visible or described, return an empty items list, total_kcal 0, confidence "low", and explain in caveats."#;
+- if nothing edible is visible or described, return an empty items list, total_kcal 0, confidence "low", and explain in caveats.
+
+Language: write all human-readable text — the summary, item names, portion details and caveats — in the same language the post is written in (a Persian post gets a Persian breakdown, an English post an English one, and so on). If the post has no text at all (photo only), use English. JSON keys and the confidence value always stay in English."#;
 
 const NARRATOR_SYSTEM_PROMPT: &str = "You are a concise nutrition coach reviewing a personal food diary. Write 2-4 short sentences of practical observations and, if useful, one concrete suggestion. No headings, no bullet points, no markdown, no emojis. Be honest, specific and encouraging.";
 
 impl Ai {
-    pub fn new(api_key: String, base_url: String, model: String, session_id: String) -> Ai {
+    pub fn new(
+        api_key: String,
+        base_url: String,
+        model: String,
+        session_id: String,
+        language: Option<String>,
+    ) -> Ai {
         let http = reqwest::Client::builder()
             .timeout(std::time::Duration::from_secs(120))
             .build()
@@ -45,6 +56,7 @@ impl Ai {
             user_agent: user_agent(),
             is_opencode,
             session_id,
+            language,
         }
     }
 
@@ -69,10 +81,20 @@ impl Ai {
             }
             json!(parts)
         };
+        // Per-call system prompt: the base rules already say "match the post's
+        // language"; AI_LANGUAGE (when set) overrides it.
+        let system = match &self.language {
+            Some(lang) => format!(
+                "{MEAL_SYSTEM_PROMPT}\n\nLanguage override: regardless of the post's language, \
+write ALL human-readable text (summary, item names, portion details, caveats) strictly in {lang}. \
+JSON keys and the confidence value stay in English."
+            ),
+            None => MEAL_SYSTEM_PROMPT.to_string(),
+        };
         let body = json!({
             "model": self.model,
             "messages": [
-                { "role": "system", "content": MEAL_SYSTEM_PROMPT },
+                { "role": "system", "content": system },
                 { "role": "user", "content": user_content }
             ],
             "temperature": 0.2,
@@ -84,10 +106,14 @@ impl Ai {
 
     /// Short narrative commentary for aggregated report stats.
     pub async fn narrate(&self, stats: &str) -> Result<String, String> {
+        let system = match &self.language {
+            Some(lang) => format!("{NARRATOR_SYSTEM_PROMPT} Write your reply in {lang}."),
+            None => NARRATOR_SYSTEM_PROMPT.to_string(),
+        };
         let body = json!({
             "model": self.model,
             "messages": [
-                { "role": "system", "content": NARRATOR_SYSTEM_PROMPT },
+                { "role": "system", "content": system },
                 { "role": "user", "content": stats }
             ],
             "temperature": 0.7,

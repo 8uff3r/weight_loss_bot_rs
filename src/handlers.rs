@@ -4,7 +4,9 @@ use chrono::{TimeZone, Utc};
 use teloxide::prelude::*;
 use teloxide::types::{MediaKind, MessageKind, MessageOrigin, UserId};
 
-use crate::pipeline::{App, Delivery, PendingPost, PhotoInput, process_album, process_single};
+use crate::pipeline::{
+    App, Delivery, PendingPost, PhotoInput, process_album, process_single, strip_breakdown,
+};
 use crate::reporting;
 use crate::store::{MealRecord, Origin, key_of};
 use crate::util::{escape_html, send_html};
@@ -13,9 +15,10 @@ const HELP: &str = "\
 🥗 <b>Food-diary bot</b>
 
 <b>Channel (automatic)</b>
-• Add me to your food-log channel as an <b>admin</b> (needs <i>Post messages</i> so I can comment the breakdown).
-• Post what you eat — text and/or a photo — and I'll reply with a breakdown and calories.
-• I re-analyze posts when you edit them.
+• Add me to your food-log channel as an <b>admin</b> (needs <i>Edit messages</i> so I can append the breakdown to your posts).
+• Post what you eat — text and/or a photo — and I'll append a breakdown (items, portions, calories) directly to your post, after a <code>----</code> seam.
+• If editing isn't possible (missing right, post too old, caption too long), I post the breakdown as a separate comment instead.
+• I re-analyze posts when you edit them and rewrite the appended breakdown.
 • Reports arrive automatically: daily shortly after midnight, weekly on Monday morning, monthly on the 1st.
 
 <b>Commands here (in this chat)</b>
@@ -120,6 +123,14 @@ async fn ingest(bot: Bot, app: Arc<App>, msg: Message, is_edit: bool) -> Respons
         return Ok(()); // our own breakdown posts
     }
 
+    // If our appended breakdown is already part of the text (an echo of our own
+    // edit, the user editing an analyzed post, or a forward of one), strip it so
+    // we always work with the user's original text only.
+    let text = ex
+        .text
+        .as_deref()
+        .map(|t| strip_breakdown(t).unwrap_or(t).to_string());
+
     let (chat_id, message_id, posted_at, origin) = identity(&msg);
     let key = key_of(chat_id, message_id);
     let dm = msg.chat.is_private();
@@ -130,14 +141,14 @@ async fn ingest(bot: Bot, app: Arc<App>, msg: Message, is_edit: bool) -> Respons
             if rec.merged_into.is_some() {
                 return Ok(()); // album member — head owns the analysis
             }
-            if rec.text == ex.text && rec.analysis.is_some() {
+            if rec.text == text && rec.analysis.is_some() {
                 return Ok(()); // nothing meaningful changed
             }
             let edit_post = {
                 let mut store = app.store.lock().await;
                 let mut edit_post = None;
                 if let Some(r) = store.get_mut(&key) {
-                    r.text = ex.text.clone();
+                    r.text = text.clone();
                     if r.photos.is_empty() && !ex.photos.is_empty() {
                         r.photos = ex.photos.iter().map(|p| p.to_record()).collect();
                         r.photo_count = ex.photos.len();
@@ -148,15 +159,20 @@ async fn ingest(bot: Bot, app: Arc<App>, msg: Message, is_edit: bool) -> Respons
                 edit_post
             };
             log::info!("post {key} edited — re-analyzing");
-            tokio::spawn(process_single(
-                bot.clone(),
-                app.clone(),
-                key,
+            let delivery = if app.cfg.ai_edit_posts {
+                Delivery::ChannelEdit {
+                    chat_id: msg.chat.id.0,
+                    message_id: msg.id.0 as i64,
+                    is_photo: !ex.photos.is_empty(),
+                    fallback_chat: msg.chat.id.0,
+                }
+            } else {
                 Delivery::ChannelComment {
                     chat_id: msg.chat.id.0,
                     edit_post,
-                },
-            ));
+                }
+            };
+            tokio::spawn(process_single(bot.clone(), app.clone(), key, delivery));
             return Ok(());
         }
 
@@ -181,7 +197,7 @@ async fn ingest(bot: Bot, app: Arc<App>, msg: Message, is_edit: bool) -> Respons
             chat_id,
             message_id,
             posted_at,
-            text: ex.text.clone(),
+            text: text.clone(),
             photos: ex.photos.iter().map(|p| p.to_record()).collect(),
             photo_count: ex.photos.len(),
             album_group: ex.album.clone(),
@@ -192,6 +208,7 @@ async fn ingest(bot: Bot, app: Arc<App>, msg: Message, is_edit: bool) -> Respons
             analysis_post_id: None,
             merged_into: None,
             reply: dm.then_some((msg.chat.id.0, msg.id.0 as i64)),
+            comment_chat: (!dm).then_some(msg.chat.id.0),
             created_at: Utc::now().timestamp(),
             attempts: 1,
         });
@@ -203,6 +220,13 @@ async fn ingest(bot: Bot, app: Arc<App>, msg: Message, is_edit: bool) -> Respons
         Delivery::DmReply {
             chat_id: msg.chat.id.0,
             message_id: msg.id.0 as i64,
+        }
+    } else if app.cfg.ai_edit_posts {
+        Delivery::ChannelEdit {
+            chat_id,
+            message_id,
+            is_photo: !ex.photos.is_empty(),
+            fallback_chat: msg.chat.id.0,
         }
     } else {
         Delivery::ChannelComment {
@@ -221,7 +245,7 @@ async fn ingest(bot: Bot, app: Arc<App>, msg: Message, is_edit: bool) -> Respons
                 map.entry(bucket.clone()).or_default().push(PendingPost {
                     chat_id,
                     message_id,
-                    text: ex.text.clone(),
+                    text: text.clone(),
                     photos: ex.photos.clone(),
                     delivery: delivery.clone(),
                 });
@@ -331,18 +355,22 @@ async fn status_command(bot: &Bot, app: &App, msg: &Message) {
         .calorie_target
         .map(|t| format!("{} kcal", t))
         .unwrap_or_else(|| "not set".into());
+    let updates_mode = if app.cfg.ai_edit_posts {
+        "edit-in-place (fallback: separate comment)"
+    } else {
+        "separate comments"
+    };
     let text = format!(
         "ℹ️ <b>Status</b>\n\
 Records: {total} (analyzed {analyzed}, failed {failed})\n\
 Range: {range}\n\
 AI model: <code>{}</code> @ <code>{}</code>\n\
-Comment in channel: {} · AI narrative: {}\n\
+Channel updates: {updates_mode} · AI narrative: {}\n\
 Reports: daily {} · weekly Mon {} · monthly 1st {}\n\
 Calorie target: {target}\n\
 TZ offset: {} min",
         escape_html(&app.cfg.ai_model),
         escape_html(&app.cfg.ai_base_url),
-        app.cfg.ai_comment_in_channel,
         app.cfg.ai_narrative,
         app.cfg.daily_report_time,
         app.cfg.weekly_report_time,
@@ -413,7 +441,7 @@ fn identity(msg: &Message) -> (i64, i64, i64, Origin) {
             chat.id.0,
             message_id.0 as i64,
             date.timestamp(),
-            Origin::Forwarded,
+            Origin::ForwardedChannel,
         ),
         Some(o) => (
             msg.chat.id.0,

@@ -7,7 +7,14 @@ pub struct Config {
     pub ai_base_url: String,
     pub ai_model: String,
     pub ai_comment_in_channel: bool,
+    /// Append the breakdown to the user's post (edit-in-place) instead of
+    /// posting a separate comment. Falls back to a comment when Telegram
+    /// refuses the edit.
+    pub ai_edit_posts: bool,
     pub ai_narrative: bool,
+    /// Forced output language for AI texts (e.g. "fa"). Empty = follow each
+    /// post's language for breakdowns, English for report narratives.
+    pub ai_language: Option<String>,
     pub tracked_chat_id: Option<i64>,
     pub report_chat_id: Option<i64>,
     pub owner_id: Option<i64>,
@@ -20,11 +27,16 @@ pub struct Config {
 }
 
 fn var(key: &str) -> Option<String> {
-    env::var(key).ok().map(|v| v.trim().to_string()).filter(|v| !v.is_empty())
+    env::var(key)
+        .ok()
+        .map(|v| v.trim().to_string())
+        .filter(|v| !v.is_empty())
 }
 
 fn flag(key: &str, default: bool) -> bool {
-    var(key).map(|v| v != "false" && v != "0" && v != "no").unwrap_or(default)
+    var(key)
+        .map(|v| v != "false" && v != "0" && v != "no")
+        .unwrap_or(default)
 }
 
 impl Config {
@@ -36,11 +48,15 @@ impl Config {
             ai_base_url: var("AI_BASE_URL").unwrap_or_else(|| "https://api.openai.com/v1".into()),
             ai_model: var("AI_MODEL").unwrap_or_else(|| "gpt-4o-mini".into()),
             ai_comment_in_channel: flag("AI_COMMENT_IN_CHANNEL", true),
+            ai_edit_posts: flag("AI_EDIT_POSTS", true),
             ai_narrative: flag("AI_NARRATIVE", true),
+            ai_language: var("AI_LANGUAGE"),
             tracked_chat_id: var("TRACKED_CHAT_ID").and_then(|v| v.parse().ok()),
             report_chat_id: var("REPORT_CHAT_ID").and_then(|v| v.parse().ok()),
             owner_id: var("OWNER_ID").and_then(|v| v.parse().ok()),
-            tz_offset_minutes: var("TZ_OFFSET_MINUTES").and_then(|v| v.parse().ok()).unwrap_or(0),
+            tz_offset_minutes: var("TZ_OFFSET_MINUTES")
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(0),
             daily_report_time: var("DAILY_REPORT_TIME").unwrap_or_else(|| "00:05".into()),
             weekly_report_time: var("WEEKLY_REPORT_TIME").unwrap_or_else(|| "00:05".into()),
             monthly_report_time: var("MONTHLY_REPORT_TIME").unwrap_or_else(|| "00:10".into()),

@@ -29,7 +29,16 @@ pub struct App {
 /// How the analysis result should be delivered.
 #[derive(Clone, Debug)]
 pub enum Delivery {
-    /// Post (or edit) the breakdown as a channel post.
+    /// Append the breakdown to the user's own post by editing it in place.
+    /// If Telegram refuses (no admin rights, post too old, caption too long),
+    /// fall back to a separate comment in `fallback_chat`.
+    ChannelEdit {
+        chat_id: i64,
+        message_id: i64,
+        is_photo: bool,
+        fallback_chat: i64,
+    },
+    /// Post (or edit) the breakdown as a separate channel post.
     ChannelComment {
         chat_id: i64,
         edit_post: Option<i64>,
@@ -38,6 +47,21 @@ pub enum Delivery {
     DmReply { chat_id: i64, message_id: i64 },
     /// Store the analysis without messaging anyone.
     Silent,
+}
+
+/// Seam inserted between the user's original text and our appended breakdown
+/// when editing a post in place.
+pub const BREAKDOWN_SEAM: &str = "\n\n----\n\n";
+/// What we search for to detect (and strip) an already-appended breakdown.
+/// The trailing 🔍 is part of the marker so that user text containing dashes
+/// can never false-match.
+const BREAKDOWN_SEAM_MARK: &str = "\n\n----\n\n🔍";
+
+/// If our appended breakdown is present in `text`, return the user's original
+/// text without it.
+pub fn strip_breakdown(text: &str) -> Option<&str> {
+    let idx = text.rfind(BREAKDOWN_SEAM_MARK)?;
+    Some(&text[..idx])
 }
 
 /// In-memory photo reference.
@@ -297,11 +321,22 @@ pub async fn janitor_once(bot: &Bot, app: &Arc<App>) {
                     message_id: *message_id,
                 },
                 None => match r.origin {
-                    Origin::Dm => Delivery::Silent,
-                    _ => Delivery::ChannelComment {
-                        chat_id: r.chat_id,
-                        edit_post: r.analysis_post_id,
-                    },
+                    Origin::Dm | Origin::Forwarded => Delivery::Silent,
+                    Origin::Channel | Origin::ForwardedChannel => {
+                        if app.cfg.ai_edit_posts {
+                            Delivery::ChannelEdit {
+                                chat_id: r.chat_id,
+                                message_id: r.message_id,
+                                is_photo: !r.photos.is_empty(),
+                                fallback_chat: r.comment_chat.unwrap_or(r.chat_id),
+                            }
+                        } else {
+                            Delivery::ChannelComment {
+                                chat_id: r.comment_chat.unwrap_or(r.chat_id),
+                                edit_post: r.analysis_post_id,
+                            }
+                        }
+                    }
                 },
             };
             let pending = PendingPost {
@@ -343,8 +378,57 @@ async fn deliver_analysis(
     analysis: &MealAnalysis,
     delivery: &Delivery,
 ) {
-    let html = render_analysis(analysis);
+    let bare = render_analysis(analysis);
     match delivery {
+        Delivery::ChannelEdit {
+            chat_id,
+            message_id,
+            is_photo,
+            fallback_chat,
+        } => {
+            if !app.cfg.ai_comment_in_channel {
+                return;
+            }
+            let chat = ChatId(*chat_id);
+            let original = {
+                let store = app.store.lock().await;
+                store.get(key).and_then(|r| r.text.clone())
+            };
+            match edit_post_in_place(
+                bot,
+                chat,
+                *message_id,
+                *is_photo,
+                original.as_deref(),
+                &bare,
+            )
+            .await
+            {
+                Ok(()) => {
+                    // If an earlier attempt fell back to a comment, clean it up.
+                    let stale = {
+                        let mut store = app.store.lock().await;
+                        let stale = store.get(key).and_then(|r| r.analysis_post_id);
+                        if stale.is_some() {
+                            if let Some(r) = store.get_mut(key) {
+                                r.analysis_post_id = None;
+                            }
+                            store.save();
+                        }
+                        stale
+                    };
+                    if let Some(pid) = stale {
+                        let _ = bot.delete_message(chat, MessageId(pid as i32)).await;
+                    }
+                }
+                Err(e) => {
+                    log::warn!(
+                        "editing post {message_id} in chat {chat_id} failed: {e} — falling back to a comment"
+                    );
+                    fallback_comment(bot, app, key, *fallback_chat, &bare).await;
+                }
+            }
+        }
         Delivery::ChannelComment { chat_id, edit_post } => {
             if !app.cfg.ai_comment_in_channel {
                 return;
@@ -353,24 +437,98 @@ async fn deliver_analysis(
             match edit_post {
                 Some(pid) => {
                     if let Err(e) = bot
-                        .edit_message_text(chat, MessageId(*pid as i32), html.clone())
+                        .edit_message_text(chat, MessageId(*pid as i32), bare.clone())
                         .parse_mode(ParseMode::Html)
                         .await
                     {
                         log::warn!("editing analysis post {pid} failed: {e} — posting fresh");
-                        post_new(bot, app, key, chat, &html).await;
+                        post_new(bot, app, key, chat, &bare).await;
                     }
                 }
-                None => post_new(bot, app, key, chat, &html).await,
+                None => post_new(bot, app, key, chat, &bare).await,
             }
         }
         Delivery::DmReply {
             chat_id,
             message_id,
         } => {
-            send_html_reply(bot, ChatId(*chat_id), *message_id, &html).await;
+            send_html_reply(bot, ChatId(*chat_id), *message_id, &bare).await;
+            // Backfilled from a channel? Also append the breakdown to the
+            // original post, best effort.
+            if app.cfg.ai_edit_posts {
+                let rec = {
+                    let store = app.store.lock().await;
+                    store.get(key).cloned()
+                };
+                if let Some(r) = rec.filter(|r| r.origin == Origin::ForwardedChannel)
+                    && let Err(e) = edit_post_in_place(
+                        bot,
+                        ChatId(r.chat_id),
+                        r.message_id,
+                        !r.photos.is_empty(),
+                        r.text.as_deref(),
+                        &bare,
+                    )
+                    .await
+                {
+                    log::debug!(
+                        "couldn't append breakdown to original post {}:{}: {e}",
+                        r.chat_id,
+                        r.message_id
+                    );
+                }
+            }
         }
         Delivery::Silent => {}
+    }
+}
+
+/// Rewrite the user's post: original text + seam + breakdown. Photos use
+/// `editMessageCaption`, plain text uses `editMessageText`.
+async fn edit_post_in_place(
+    bot: &Bot,
+    chat: ChatId,
+    message_id: i64,
+    is_photo: bool,
+    original_text: Option<&str>,
+    breakdown_html: &str,
+) -> Result<(), teloxide::RequestError> {
+    let composed = match original_text.map(str::trim).filter(|t| !t.is_empty()) {
+        Some(t) => format!("{t}{BREAKDOWN_SEAM}{breakdown_html}"),
+        None => breakdown_html.to_string(),
+    };
+    if is_photo {
+        bot.edit_message_caption(chat, MessageId(message_id as i32))
+            .caption(composed)
+            .parse_mode(ParseMode::Html)
+            .await?;
+    } else {
+        bot.edit_message_text(chat, MessageId(message_id as i32), composed)
+            .parse_mode(ParseMode::Html)
+            .await?;
+    }
+    Ok(())
+}
+
+/// Post (or update) the separate-comment fallback for a failed in-place edit.
+async fn fallback_comment(bot: &Bot, app: &App, key: &str, chat_id: i64, bare: &str) {
+    let chat = ChatId(chat_id);
+    let existing = {
+        let store = app.store.lock().await;
+        store.get(key).and_then(|r| r.analysis_post_id)
+    };
+    match existing {
+        Some(pid) => {
+            if let Err(e) = bot
+                .edit_message_text(chat, MessageId(pid as i32), bare.to_string())
+                .parse_mode(ParseMode::Html)
+                .await
+            {
+                log::warn!("editing fallback comment {pid} failed: {e} — posting fresh");
+                post_new(bot, app, key, chat, bare).await;
+            }
+        }
+        None => post_new(bot, app, key, chat, bare).await,
     }
 }
 
@@ -465,7 +623,6 @@ pub fn render_analysis(a: &MealAnalysis) -> String {
     if !macros.is_empty() {
         h.push_str(&format!("\n🧪 {}", macros.join(" · ")));
     }
-    h.push_str("\n\n<i>🤖 AI estimate — treat as a ballpark (±20%).</i>");
     h
 }
 
