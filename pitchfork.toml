@@ -1,0 +1,2 @@
+[daemons.api]
+run = "./tg_wl_bot"

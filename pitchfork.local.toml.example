@@ -1,0 +1,52 @@
+[env]
+# ── Required ────────────────────────────────────────────────────────────────
+# From @BotFather
+TELOXIDE_TOKEN = "123456789:AA-your-bot-token-here"
+
+# AI settings — any OpenAI-compatible API works
+AI_API_KEY = "sk-your-key"
+AI_BASE_URL = "https://api.openai.com/v1"
+AI_MODEL = "gpt-4o-mini"
+# If AI_BASE_URL contains "opencode.ai" the bot automatically sends a stable
+# x-opencode-session id (persisted in the log) and its own User-Agent.
+#AI_BASE_URL=https://opencode.ai/ai/v1
+
+# ── Optional ────────────────────────────────────────────────────────────────
+# Restrict tracking to one chat id (your channel, e.g. -1001234567890).
+# Without it, every channel where the bot is admin is tracked.
+#TRACKED_CHAT_ID=-1001234567890
+
+# Your Telegram user id (owns DM commands). If unset, the first user to
+# message the bot becomes the owner automatically.
+#OWNER_ID=123456789
+
+# Where scheduled reports go. Fallback order: REPORT_CHAT_ID → TRACKED_CHAT_ID → owner DM.
+#REPORT_CHAT_ID=-1001234567890
+
+# Your timezone, minutes east of UTC (e.g. 180 for UTC+3, -300 for UTC-5).
+#TZ_OFFSET_MINUTES=0
+
+# Scheduled report times (local, HH:MM). Daily/weekly fire just after the
+# period ends: daily ~00:05 covers yesterday; weekly Mon ~00:05 covers last week;
+# monthly on the 1st ~00:10 covers the previous month.
+#DAILY_REPORT_TIME=00:05
+#WEEKLY_REPORT_TIME=00:05
+#MONTHLY_REPORT_TIME=00:10
+
+# Daily calorie target for "avg/day vs target" lines in reports.
+#CALORIE_TARGET=2200
+
+# Post the breakdown into the channel at all (true/false)
+#AI_COMMENT_IN_CHANNEL=true
+# Append the breakdown to the post itself by editing it (true/false).
+# Falls back to a separate comment when Telegram refuses the edit.
+#AI_EDIT_POSTS=true
+# Force a language for all AI output, e.g. fa / persian. When unset,
+# breakdowns follow the language of each post (photo-only posts: English)
+# and report narratives stay English.
+#AI_LANGUAGE=
+# Add AI-written commentary to scheduled reports (true/false)
+#AI_NARRATIVE=true
+
+# Storage directory for the JSON log and cached photos.
+#DATA_DIR=data
