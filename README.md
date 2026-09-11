@@ -44,9 +44,10 @@ flowchart LR
 - **Edited posts**: when you edit your post, the bot strips its previously appended section (detected via the `----` seam), re-analyzes the changed text and rewrites the appended breakdown. The seam also makes forwarded copies of analyzed posts safe: the bot strips its own section before logging.
 - **Albums**: a media group is buffered briefly and analyzed as **one meal** with a single AI call over all its photos.
 - **Quick logging**: send a photo/text directly to the bot in DM — analyzed and counted in reports.
-- **Backfilling history**: Telegram bots can't read chat history. Forward old posts to the bot in DM; it logs them under their **original date** and **skips duplicates** (identity = original channel + message id), so double-forwarding is safe. Editing an old post also (re)logs it.
+- **Backfilling history**: Telegram bots can't read chat history. Forward old posts to the bot in DM **or into the channel**; it logs them under their **original date** and **skips duplicates** (identity = original channel + message id), so double-forwarding is safe. It also appends the breakdown to the original post. Editing an old post also (re)logs it.
+- **Commands in the channel**: posting `/today`, `/report …`, `/rescan` … directly in the channel runs the command there — the bot answers as a channel post. Commands are never logged as meals.
 
-## Commands (in DM with the bot)
+## Commands (in DM or in the channel)
 
 | Command                         | Meaning                              |
 | ------------------------------- | ------------------------------------ |

@@ -21,7 +21,7 @@ const HELP: &str = "\
 • I re-analyze posts when you edit them and rewrite the appended breakdown.
 • Reports arrive automatically: daily shortly after midnight, weekly on Monday morning, monthly on the 1st.
 
-<b>Commands here (in this chat)</b>
+<b>Commands</b> — here in DM, or posted directly in the channel
 /today — today so far
 /report day|week|month — current period
 /report day|week|month last — previous period
@@ -37,8 +37,8 @@ const BACKFILL_HELP: &str = "\
 🔙 <b>Importing old posts</b>
 
 Bots can't read channel history, so do this instead:
-1. Open your channel, long-press a post (or several) and <b>forward</b> them to this chat.
-2. I'll analyze each one using its <b>original date/time</b>, so reports stay accurate.
+1. Open your channel, long-press an old post (or several) and <b>forward</b> it — into the channel or to me in DM.
+2. I'll log it under its <b>original date/time</b> and append the breakdown to the original post (if I have the edit right there).
 3. Posts that are already in the log are skipped automatically — forwarding twice is safe.
 
 Tip: you can also just <i>edit</i> an old post in the channel — I treat edits as a signal to log and analyze it.";
@@ -48,10 +48,30 @@ Tip: you can also just <i>edit</i> an old post in the channel — I treat edits 
 // ---------------------------------------------------------------------------
 
 pub async fn channel_post(bot: Bot, app: Arc<App>, msg: Message) -> ResponseResult<()> {
+    if is_self(&app, &msg) {
+        return Ok(());
+    }
+    // Commands posted in the channel run there too (and are never logged).
+    if let Some(tracked) = app.cfg.tracked_chat_id
+        && msg.chat.id.0 != tracked
+    {
+        return Ok(());
+    }
+    if let Some(text) = msg.text().filter(|t| t.trim_start().starts_with('/')) {
+        handle_command(&bot, &app, &msg, text).await;
+        return Ok(());
+    }
     ingest(bot, app, msg, false).await
 }
 
 pub async fn channel_post_edited(bot: Bot, app: Arc<App>, msg: Message) -> ResponseResult<()> {
+    if is_self(&app, &msg) {
+        return Ok(());
+    }
+    // Command posts are never logged; editing one is ignored.
+    if msg.text().is_some_and(|t| t.trim_start().starts_with('/')) {
+        return Ok(());
+    }
     ingest(bot, app, msg, true).await
 }
 
